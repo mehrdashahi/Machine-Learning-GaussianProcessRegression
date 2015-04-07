@@ -1,0 +1,157 @@
+# GAUSSIAN PROCESS REGRESSION FUNCTIONS.  
+
+
+# CREATE THE COVARIANCE MATRIX FOR TRAINING RESPONSES.  The arguments are
+# the matrix of training inputs, the covariance function (taking an input
+# vector and a matrix as arguments), and the vector of hyperparameters.
+# The first element in the hyperparameter vector is the residual 
+# variance, which is added to the diagonal of the covariance matrix,
+# but which is ignored by the covariance function.  The result is the
+# matrix of covariances for responses in training cases.
+
+gp_cov_matrix <- function (x_train, covf, hypers)
+{
+  n <- nrow(x_train)
+
+  C <- matrix(NA,n,n)
+  
+  for (i in 1:n)
+  { C[i,] <- covf(x_train[i,],x_train,hypers)
+  }
+
+  diag(C) <- diag(C) + hypers[1]^2
+
+  C
+}
+
+
+# PREDICT THE RESPONSE FOR TEST CASES.  The arguments are the matrix of
+# inputs for training cases, the vector of responses for training cases,
+# the matrix of inputs for test cases, and the covariance function and
+# hyperparameter vector as described for gp_cov_matrix.  The result is
+# a vector of predictions of the responses for test cases (the predictive
+# mean).
+
+gp_predict <- function (x_train, y_train, x_test, covf, hypers)
+{
+  n <- nrow(x_train)
+ 
+  C <- gp_cov_matrix(x_train,covf,hypers)
+  b <- solve(C,y_train)
+
+  r <- numeric(nrow(x_test))
+
+  for (i in 1:nrow(x_test))
+  { k <- covf(x_test[i,],x_train,hypers)
+    r[i] <- k %*% b
+  }
+
+  r
+}
+
+
+# FIND THE LOG LIKELIHOOD BASED ON RESPONSES IN THE TRAINING SET.
+# The arguments are the matrix of inputs for training cases, the
+# vector of responses for training cases, and the covariance function
+# and hyperparameter vector as described for gp_cov_matrix.  The
+# result is the log of the probability density for the training
+# responses (with all normalizing factors included).
+
+gp_log_likelihood <- function (x_train, y_train, covf, hypers)
+{
+  n <- nrow(x_train)
+
+  C <- gp_cov_matrix(x_train,covf,hypers)
+  b <- solve(C,y_train)
+  
+  - (n/2)*log(2*pi) - determinant(C)$modulus/2 - y_train%*%b/2
+}
+
+
+# FIND HYPERPARAMETER VALUES MAXIMIZING LOG PROBABILITY.  Arguments
+# are the matrix of training inputs, the vector of training responses,
+# the covariance function (as for gp_cov_matrix), and a vector of
+# initial values for the hyperparameters.  (Any additional arguments are
+# passed on to the nlm function.) The result is a vector of values
+# for the hyperparameters that should usually at least a locally maximize 
+# the likelihood.
+#
+# The maximization is done in terms of the log likelihood, with hyperparameter 
+# h transformed to sqrt(h-0.01) in order to avoid problems that would arise
+# with hyperparameters that are negative or near zero (less than 0.01).
+
+gp_find_hypers <- function (x_train, y_train, covf, hypers0, ...)
+{
+  m <- nlm (
+    function (h) - gp_log_likelihood(x_train,y_train,covf, h^2+0.01), 
+    sqrt(hypers0-0.01),
+    ... )
+
+  cat ("Maximum log likelihood:", -m$minimum, "\n")
+
+  m$estimate^2 + 0.01
+}
+
+
+# FIND HYPERPARAMETERS USING CROSS VALIDATION.  Arguments are the matrix
+# of training inputs, the vector of training responses, the covariance 
+# function (as for gp_cov_matrix), the number of cross-validation folds,
+# and a vector of initial values for the hyperparameters.  (Any additional 
+# arguments are passed on to the nlm function.) The result is a vector of 
+# values for the hyperparameters that should usually at least locally 
+# minimize the squared error from cross validation.
+#
+# The minimization is done in terms of hyperparameters h transformed to 
+# sqrt(h-0.01) in order to avoid problems that would arise with hyperparameters
+# that are negative or near zero (less than 0.01).
+
+gp_find_hypers_cv <- function (x_train, y_train, covf, K, hypers0, ...)
+{
+  div <- floor(seq(0,length(y_train),length=K+1))
+  e <- rep(0,length(y_train))
+  m <- nlm (
+    function (h)
+    { for (i in 1:K)
+      { r <- (div[i]+1):div[i+1]
+        e[r] <- (y_train[r] - gp_predict (x_train[-r,], y_train[-r], 
+                   x_train[r,], covf, h^2 + 0.01))^2
+      }
+      mean(e)
+    },
+    sqrt(hypers0-0.01),
+    ... )
+
+  cat ("Minimum cv error:", m$minimum, "\n")
+
+  m$estimate^2 + 0.01
+}
+
+
+# BAYESIAN PREDICTION USING IMPORTANCE SAMPLING.   Arguments are the matrix
+# of training inputs, the vector of training responses, the matrix of test
+# inputs, the covariance function (as for gp_cov_matrix), the vector of
+# prior means for the logs of the parameters, the vector of prior standard
+# deviations for the logs of the parameters, and the number of parameter
+# values to sample from the prior.  The value returned is a list with
+# element "pred" being the vector of mean predictions for test cases, the
+# element "hypers" being the mean values for the hyperparameters, and the 
+# element "ml" being the estimated marginal likelihood.
+
+gp_imp_samp <- function (x_train, y_train, x_test, covf, prmean, prsd, K)
+{
+  h <- length(prmean)
+
+  pred <- 0
+  hypers <- 0
+  tot <- 0
+
+  for (i in 1:K)
+  { hyp <- exp(rnorm(h,prmean,prsd))
+    wgt <- exp(gp_log_likelihood(x_train,y_train,covf,hyp))
+    pred <- pred + wgt * gp_predict(x_train,y_train,x_test,covf,hyp)
+    hypers <- hypers + wgt * hyp
+    tot <- tot + wgt
+  }
+
+  list (pred=pred/tot, hypers=hypers/tot, ml=mean(wgt))
+}
