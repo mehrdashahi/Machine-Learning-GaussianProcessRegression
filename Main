@@ -1,0 +1,206 @@
+
+# STA 414, Spring 2014, Assignment #1.
+
+source("ass1-gp.r")
+
+
+# DEFINE TEST DATA FILES AND FUNCTION FOR COMPUTING TEST ERROR.
+
+testx_file <- "testx"
+testy_file <- "testy"
+
+test_sq_err <- function (pred) mean((pred-testy)^2)
+
+
+# DEFINE COVARIANCE FUNCTIONS TO USE.
+
+covf0 <- function (x1, X2, h)
+{
+  as.vector (100^2 + 100^2 * colSums(x1*t(X2)))
+}
+
+covf1 <- function (x1, X2, h)
+{
+  as.vector (100^2 + h[2]^2 * exp (-h[3]*colSums(abs(x1-t(X2)))))
+}
+
+covf2 <- function (x1, X2, h)
+{
+  as.vector (100^2 + h[2]^2 * exp (-h[3]^2*colSums((x1-t(X2))^2)))
+}
+
+covf3 <- function (x1, X2, h)
+{
+  as.vector (100^2 + h[2]^2 * exp (-h[4]*colSums(abs(x1-t(X2))))
+                   + h[3]^2 * exp (-h[4]^2*colSums((x1-t(X2))^2)))
+}
+
+
+# DO EVERYTHING FOR BOTH TRAINING SETS.
+
+for (data_set in 1:2)
+{
+  # READ THE TEST DATA.  Have to do it each time, since it's later rescaled.
+
+  testx <- as.matrix(read.table(testx_file,head=F))
+  testy <- scan(testy_file)
+
+  # READ THE TRAINING DATA. 
+
+  trainx_file <- paste0("train",data_set,"x")
+  trainy_file <- paste0("train",data_set,"y")
+
+  trainx <- as.matrix(read.table(trainx_file,head=F))
+  trainy <- scan(trainy_file)
+
+  cat("\n--- APPLYING MODELS TO DATA IN",trainx_file,"AND",trainy_file,"\n\n")
+
+  cat("\nSIMPLE LINEAR MODEL\n")
+
+  lin_model1 <- lm(trainy~trainx)
+  print(summary(lin_model1))
+
+  lin_pred1 <- cbind(1,testx) %*% coef(lin_model1)
+  cat ("Average test squared error:",round(test_sq_err(lin_pred1),3),"\n")
+
+  cat("\nLINEAR MODEL WITH QUADRATIC TERMS\n")
+
+  trainx2 <- cbind(trainx,trainx^2)
+  testx2 <- cbind(testx,testx^2)
+
+  lin_model2 <- lm(trainy~trainx2)
+  print(summary(lin_model2))
+
+  lin_pred2 <- cbind(1,testx2) %*% coef(lin_model2)
+  cat ("Average test squared error:",round(test_sq_err(lin_pred2),3),"\n")
+
+  cat("\nLINEAR MODEL WITH QUADRATIC AND CUBIC TERMS\n")
+
+  trainx3 <- cbind(trainx,trainx^2,trainx^3)
+  testx3 <- cbind(testx,testx^2,testx^3)
+
+  lin_model3 <- lm(trainy~trainx3)
+  print(summary(lin_model3))
+
+  lin_pred3 <- cbind(1,testx3) %*% coef(lin_model3)
+  cat ("Average test squared error:",round(test_sq_err(lin_pred3),3),"\n")
+
+  cat("\n\nGP VERSION OF SIMPLE LINEAR MODEL\n\n")
+
+  lingp_pred <- gp_predict (trainx, trainy, testx, covf0, 1)
+  cat ("Average test squared error:",round(test_sq_err(lingp_pred),3),"\n")
+
+  cat("\nGP WITH SQUARED EXP TERM, MAX ML, NO RESCALING\n")
+
+  for (init in list (c(1,1,1), c(0.2,2,2)))
+  { cat("\nInitial values:",init,"\n")
+    print(system.time(gp2u_hypers <- 
+           gp_find_hypers (trainx, trainy, covf2, init)))
+    cat("Hyperparameter values:",gp2u_hypers,"\n")
+    gp2u_pred <- gp_predict (trainx, trainy, testx, covf2, gp2u_hypers)
+    cat ("Average test squared error:",round(test_sq_err(gp2u_pred),3),"\n")
+  }
+  
+  cat("\n\nREMAINING RESULTS AFTER RESCALING...\n\n")
+
+  trainx[,1] <- trainx[,1] / 10
+  trainx[,7] <- trainx[,7] / 10
+  testx[,1] <- testx[,1] / 10
+  testx[,7] <- testx[,7] / 10
+  
+  cat("\nGP WITH SQUARED EXP TERM, MAX ML\n")
+
+  for (init in list (c(1,1,1), c(0.2,2,2)))
+  { cat("\nInitial values:",init,"\n")
+    print(system.time(gp2_hypers <- 
+           gp_find_hypers (trainx, trainy, covf2, init)))
+    cat("Hyperparameter values:",gp2_hypers,"\n")
+    gp2_pred <- gp_predict (trainx, trainy, testx, covf2, gp2_hypers)
+    cat ("Average test squared error:",round(test_sq_err(gp2_pred),3),"\n")
+  }
+
+  cat("\nGP WITH ABS EXP TERM, MAX ML\n")
+
+  for (init in list (c(1,1,1), c(0.2,2,2)))
+  { cat("\nInitial values:",init,"\n")
+    print(system.time(gp1_hypers <- 
+           gp_find_hypers (trainx, trainy, covf1, init)))
+    cat("Hyperparameter values:",gp1_hypers,"\n")
+    gp1_pred <- gp_predict (trainx, trainy, testx, covf1, gp1_hypers)
+    cat ("Average test squared error:",round(test_sq_err(gp1_pred),3),"\n")
+  }
+
+  cat("\nGP WITH TWO EXP TERMS, MAX ML\n")
+
+  for (init in list (c(1,1,1,1), c(0.2,2,2,2), c(0.4,1,2,1), c(0.4,2,1,1)))
+  { cat("\nInitial values:",init,"\n")
+    print(system.time(gp3_hypers <- 
+           gp_find_hypers (trainx, trainy, covf3, init)))
+    cat("Hyperparameter values:",gp3_hypers,"\n")
+    gp3_pred <- gp_predict (trainx, trainy, testx, covf3, gp3_hypers)
+    cat ("Average test squared error:",round(test_sq_err(gp3_pred),3),"\n")
+  }
+
+  cat("\nGP WITH SQUARED EXP TERM, CV\n")
+
+  for (init in list (c(1,1,1), c(0.2,2,2)))
+  { cat("\nInitial values:",init,"\n")
+    print(system.time(gp2_hypers_cv <- 
+           gp_find_hypers_cv (trainx, trainy, covf2, 10, init)))
+    cat("Hyperparameter values:",gp2_hypers_cv,"\n")
+    gp2_pred_cv <- gp_predict (trainx, trainy, testx, covf2, gp2_hypers_cv)
+    cat ("Average test squared error:",round(test_sq_err(gp2_pred_cv),3),"\n")
+  }
+  
+  cat("\nGP WITH ABS EXP TERM, CV\n")
+
+  for (init in list (c(1,1,1), c(0.2,2,2)))
+  { cat("\nInitial values:",init,"\n")
+    print(system.time(gp1_hypers_cv <- 
+           gp_find_hypers_cv (trainx, trainy, covf1, 10, init)))
+    cat("Hyperparameter values:",gp1_hypers_cv,"\n")
+    gp1_pred_cv <- gp_predict (trainx, trainy, testx, covf1, gp1_hypers_cv)
+    cat ("Average test squared error:",round(test_sq_err(gp1_pred_cv),3),"\n")
+  }
+  
+  cat("\nGP WITH TWO EXP TERMS, CV\n")
+
+  for (init in list (c(1,1,1,1)))
+  { cat("\nInitial values:",init,"\n")
+    print(system.time(gp3_hypers_cv <- 
+           gp_find_hypers_cv (trainx, trainy, covf3, 10, init)))
+    cat("Hyperparameter values:",gp3_hypers_cv,"\n")
+    gp3_pred_cv <- gp_predict (trainx, trainy, testx, covf3, gp3_hypers_cv)
+    cat ("Average test squared error:",round(test_sq_err(gp3_pred_cv),3),"\n")
+  }
+
+  cat("\nGP WITH SQUARED EXP TERM, IMPORTANCE SAMPLING\n\n")
+
+  set.seed(1)
+
+  print(system.time(gp2_is <- 
+    gp_imp_samp (trainx, trainy, testx, covf2, c(-1,0,0), c(1,1,1), 1000)))
+  cat("Mean hyperparameter values:",gp2_is$hypers,"\n")
+  cat("Marginal likelihood:",gp2_is$ml,"\n")
+  cat ("Average test squared error:",round(test_sq_err(gp2_is$pred),3),"\n")
+
+  cat("\nGP WITH ABS EXP TERM, IMPORTANCE SAMPLING\n\n")
+
+  set.seed(1)
+
+  print(system.time(gp1_is <- 
+    gp_imp_samp (trainx, trainy, testx, covf1, c(-1,0,0), c(1,1,1), 1000)))
+  cat("Mean hyperparameter values:",gp1_is$hypers,"\n")
+  cat("Marginal likelihood:",gp1_is$ml,"\n")
+  cat ("Average test squared error:",round(test_sq_err(gp1_is$pred),3),"\n")
+
+  cat("\nGP WITH TWO EXP TERMS, IMPORTANCE SAMPLING\n\n")
+
+  set.seed(1)
+
+  print(system.time(gp3_is <- 
+    gp_imp_samp (trainx, trainy, testx, covf3, c(-1,0,0,0), c(1,1,1,1), 1000)))
+  cat("Mean hyperparameter values:",gp3_is$hypers,"\n")
+  cat("Marginal likelihood:",gp3_is$ml,"\n")
+  cat ("Average test squared error:",round(test_sq_err(gp3_is$pred),3),"\n")
+}
